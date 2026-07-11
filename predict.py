@@ -37,10 +37,15 @@ def predict(image_path, model_name, num_classes, class_names):
     with torch.no_grad():
         outputs = model(tensor)
         probabilities = torch.softmax(outputs, dim=1)
-        confidence, predicted = probabilities.max(1)
+        top_probs, top_indices = torch.topk(probabilities, 5)
 
-    label = class_names[predicted.item()]
-    return label, confidence.item()
+    print(f"\nTop 5 predictions for {model_name}:")
+    for prob, idx in zip(top_probs[0], top_indices[0]):
+        print(f"- {class_names[idx.item()]}: {prob.item() * 100:.2f}%")
+
+    best_label = class_names[top_indices[0][0].item()]
+    best_confidence = top_probs[0][0].item()
+    return best_label, best_confidence
 
 
 def evaluate_model(model_name, dataset_path, class_names, batch_size=32, num_workers=4):
@@ -98,16 +103,19 @@ def prompt_model_name():
     print("1. mobilenetv2")
     print("2. mobilenetv3")
     print("3. customcnn")
+    print("4. all models")
 
     while True:
-        choice = input("Enter 1, 2, or 3: ").strip()
+        choice = input("Enter 1, 2, 3, or 4: ").strip()
         if choice == "1":
             return "mobilenetv2"
         if choice == "2":
             return "mobilenetv3"
         if choice == "3":
             return "customcnn"
-        print("Invalid choice. Enter 1, 2, or 3.")
+        if choice == "4":
+            return "all"
+        print("Invalid choice. Enter 1, 2, 3, or 4.")
 
 
 def prompt_mode():
@@ -127,7 +135,7 @@ def prompt_mode():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("image", nargs="?", help="Path to an image file")
-    parser.add_argument("--model", choices=["mobilenetv2", "mobilenetv3", "customcnn"], help="Model to test")
+    parser.add_argument("--model", choices=["mobilenetv2", "mobilenetv3", "customcnn", "all"], help="Model to test")
     parser.add_argument("--dataset", default="./American")
     parser.add_argument("--evaluate", action="store_true", help="Evaluate the model across the full dataset")
     args = parser.parse_args()
@@ -140,7 +148,12 @@ def main():
         model_name = prompt_model_name()
 
     if args.evaluate:
-        evaluate_model(model_name, args.dataset, class_names)
+        if model_name == "all":
+            for each_model in ["mobilenetv2", "mobilenetv3", "customcnn"]:
+                print(f"\n=== {each_model} ===")
+                evaluate_model(each_model, args.dataset, class_names)
+        else:
+            evaluate_model(model_name, args.dataset, class_names)
         return
 
     mode = "image"
@@ -148,22 +161,32 @@ def main():
         mode = prompt_mode()
 
     if mode == "evaluate":
-        evaluate_model(model_name, args.dataset, class_names)
+        if model_name == "all":
+            for each_model in ["mobilenetv2", "mobilenetv3", "customcnn"]:
+                print(f"\n=== {each_model} ===")
+                evaluate_model(each_model, args.dataset, class_names)
+        else:
+            evaluate_model(model_name, args.dataset, class_names)
         return
 
     image_path = args.image
     if not image_path:
         image_path = input("Enter the path to the image: ").strip().strip('"')
 
-    label, confidence = predict(
-        image_path,
-        model_name,
-        len(class_names),
-        class_names,
-    )
+    if model_name == "all":
+        for each_model in ["mobilenetv2", "mobilenetv3", "customcnn"]:
+            print(f"\n=== {each_model} ===")
+            predict(image_path, each_model, len(class_names), class_names)
+    else:
+        label, confidence = predict(
+            image_path,
+            model_name,
+            len(class_names),
+            class_names,
+        )
 
-    print(f"Prediction: {label}")
-    print(f"Confidence: {confidence * 100:.2f}%")
+        print(f"Prediction: {label}")
+        print(f"Confidence: {confidence * 100:.2f}%")
 
 
 if __name__ == "__main__":
