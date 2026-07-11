@@ -1,0 +1,8 @@
+
+American/
+
+__pycache__/
+*.pyc
+tf-env/
+.venv/
+venv/
