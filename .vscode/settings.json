@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "C:/Users/ultra potato/AppData/Local/Programs/Python/Python313/python.exe",
+  "python.terminal.activateEnvironment": false,
+  "python.terminal.activateEnvInCurrentTerminal": false,
+  "python.analysis.autoSearchPaths": true,
+  "python.analysis.useLibraryCodeForTypes": true,
+  "python-envs.defaultEnvManager": "ms-python.python:system"
+}

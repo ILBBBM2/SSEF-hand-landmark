@@ -1,0 +1,56 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Collect webcam dataset (asks for label)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/collect_landmarks.py",
+      "console": "integratedTerminal",
+      "python": "C:/Users/ultra potato/AppData/Local/Programs/Python/Python313/python.exe"
+    },
+    {
+      "name": "Delete a webcam dataset label (asks for label)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/delete_landmark_label.py",
+      "console": "integratedTerminal",
+      "python": "C:/Users/ultra potato/AppData/Local/Programs/Python/Python313/python.exe"
+    },
+    {
+      "name": "Extract videos with landmark preview",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/extract_video_landmarks.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--input",
+        "${workspaceFolder}/vids",
+        "--sample-fps",
+        "6",
+        "--visualize",
+        "--output",
+        "${workspaceFolder}/video_preview_dataset"
+      ],
+      "python": "C:/Users/ultra potato/AppData/Local/Programs/Python/Python313/python.exe"
+    },
+    {
+      "name": "Train landmark classifier (GPU)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train.py",
+      "console": "integratedTerminal",
+      "args": ["--model", "landmark_mlp", "--fresh", "--device", "cuda"],
+      "python": "C:/Users/ultra potato/AppData/Local/Programs/Python/Python313/python.exe"
+    },
+    {
+      "name": "Run train.py (system Python)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train.py",
+      "console": "integratedTerminal",
+      "args": ["--model", "mobilenetv2"],
+      "python": "C:/Users/ultra potato/AppData/Local/Programs/Python/Python313/python.exe"
+    }
+  ]
+}

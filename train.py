@@ -9,7 +9,8 @@ import torch.optim as optim
 
 from dataset import create_dataloaders
 from engine import train, validate
-from models import build_model
+from landmark_dataset import create_landmark_dataloaders
+from models import LANDMARK_MODELS, build_model
 from utils import (
     BATCH_SIZE,
     CHECKPOINT_DIR,
@@ -17,30 +18,60 @@ from utils import (
     DEVICE,
     EPOCHS,
     IMAGE_SIZE,
+    LANDMARKS_CACHE_PATH,
     LEARNING_RATE,
     NUM_WORKERS,
     checkpoint_path_for,
+    class_names_path_for,
     load_checkpoint,
 )
 
 
-def main(model_name="mobilenetv2", resume=False):
+def is_landmark_model(model_name):
+    return model_name in LANDMARK_MODELS
+
+
+def create_dataloaders_for_model(model_name):
+    if is_landmark_model(model_name):
+        return create_landmark_dataloaders(
+            LANDMARKS_CACHE_PATH,
+            BATCH_SIZE,
+            NUM_WORKERS,
+        )
+
     train_loader, val_loader, class_names, num_classes = create_dataloaders(
         DATASET_PATH,
         BATCH_SIZE,
         NUM_WORKERS,
         IMAGE_SIZE,
     )
+    return train_loader, val_loader, class_names, num_classes, None
+
+
+def main(
+    model_name="landmark_mlp",
+    resume=False,
+    device=DEVICE,
+):
+    loaders = create_dataloaders_for_model(model_name)
+    train_loader, val_loader, class_names, num_classes = loaders[:4]
+    sample_count = loaders[4] if len(loaders) > 4 else None
 
     print(class_names)
     print(f"Number of Classes: {num_classes}")
+    if sample_count is not None:
+        print(f"Landmark samples: {sample_count}")
+    if device.type == "cuda":
+        print(f"Training device: {device} ({torch.cuda.get_device_name(device)})")
+    else:
+        print("Training device: cpu")
 
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-    with open(os.path.join(CHECKPOINT_DIR, "class_names.json"), "w") as f:
+    with open(class_names_path_for(model_name), "w") as f:
         json.dump(class_names, f)
 
     model, trainable_params = build_model(model_name, num_classes)
-    model = model.to(DEVICE)
+    model = model.to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(trainable_params, lr=LEARNING_RATE)
@@ -57,10 +88,10 @@ def main(model_name="mobilenetv2", resume=False):
             )
         else:
             start_epoch, saved_best = load_checkpoint(
-                checkpoint_path, model, optimizer, DEVICE
+                checkpoint_path, model, optimizer, device
             )
             if saved_best is None:
-                best_accuracy = validate(model, val_loader, DEVICE)
+                best_accuracy = validate(model, val_loader, device)
                 print(
                     f"Resumed legacy checkpoint. "
                     f"Current validation accuracy: {best_accuracy:.2f}%"
@@ -79,7 +110,7 @@ def main(model_name="mobilenetv2", resume=False):
             val_loader,
             criterion,
             optimizer,
-            DEVICE,
+            device,
             EPOCHS,
             checkpoint_path,
             start_epoch=start_epoch,
@@ -117,26 +148,43 @@ def prompt_resume(model_name, checkpoint_dir=CHECKPOINT_DIR):
 
 def prompt_model_name():
     print("Choose a model:")
-    print("1. mobilenetv2")
-    print("2. mobilenetv3")
-    print("3. customcnn")
+    print("1. landmark_mlp (MediaPipe hand landmarks)")
+    print("2. mobilenetv2 (image-based)")
+    print("3. mobilenetv3 (image-based)")
+    print("4. customcnn (image-based)")
 
     while True:
-        choice = input("Enter 1, 2, or 3: ").strip()
+        choice = input("Enter 1, 2, 3, or 4: ").strip()
         if choice == "1":
-            return "mobilenetv2"
+            return "landmark_mlp"
         if choice == "2":
-            return "mobilenetv3"
+            return "mobilenetv2"
         if choice == "3":
+            return "mobilenetv3"
+        if choice == "4":
             return "customcnn"
-        print("Invalid choice. Enter 1, 2, or 3.")
+        print("Invalid choice. Enter 1, 2, 3, or 4.")
+
+
+def select_device(requested_device):
+    """Choose an available training device, with an explicit CUDA option."""
+    if requested_device == "auto":
+        return DEVICE
+    if requested_device == "cpu":
+        return torch.device("cpu")
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA was requested, but PyTorch cannot access a CUDA GPU. "
+            "Use --device auto or --device cpu instead."
+        )
+    return torch.device("cuda")
 
 
 def cli():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
-        choices=["mobilenetv2", "mobilenetv3", "customcnn"],
+        choices=["landmark_mlp", "mobilenetv2", "mobilenetv3", "customcnn"],
         help="Model to train",
     )
     parser.add_argument(
@@ -148,6 +196,12 @@ def cli():
         "--fresh",
         action="store_true",
         help="Start from scratch without prompting",
+    )
+    parser.add_argument(
+        "--device",
+        choices=["auto", "cuda", "cpu"],
+        default="auto",
+        help="Training device. auto uses CUDA when available (default).",
     )
     args = parser.parse_args()
 
@@ -163,7 +217,11 @@ def cli():
     else:
         resume = prompt_resume(model_name)
 
-    main(model_name=model_name, resume=resume)
+    main(
+        model_name=model_name,
+        resume=resume,
+        device=select_device(args.device),
+    )
 
 
 if __name__ == "__main__":

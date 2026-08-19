@@ -1,0 +1,8 @@
+{
+  "class_names": [
+    "A"
+  ],
+  "num_samples": 100,
+  "feature_dim": 63,
+  "source_images": "C:\\Users\\ultra potato\\Documents\\stupid game\\SSEF-hand-lankmark\\validation_images"
+}

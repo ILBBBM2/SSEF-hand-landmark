@@ -10,6 +10,15 @@ def get_train_transform(image_size):
         transforms.Resize((image_size, image_size)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(5),
+        transforms.RandomAffine(
+            degrees=15,
+            translate=(0.1, 0.1),
+            scale=(0.85, 1.15),
+        ),
+        transforms.ColorJitter(
+            brightness=0.2,
+            contrast=0.2,
+        ),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])

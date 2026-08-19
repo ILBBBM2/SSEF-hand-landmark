@@ -1,5 +1,8 @@
 
 American/
+landmarks_cache/
+landmark_dataset/
+vids/
 
 __pycache__/
 *.pyc
