@@ -24,6 +24,8 @@ from utils import (
     checkpoint_path_for,
     class_names_path_for,
     load_checkpoint,
+    SPLIT_SEED,
+    set_random_seed,
 )
 
 
@@ -31,12 +33,13 @@ def is_landmark_model(model_name):
     return model_name in LANDMARK_MODELS
 
 
-def create_dataloaders_for_model(model_name):
+def create_dataloaders_for_model(model_name, seed=SPLIT_SEED):
     if is_landmark_model(model_name):
         return create_landmark_dataloaders(
             LANDMARKS_CACHE_PATH,
             BATCH_SIZE,
             NUM_WORKERS,
+            seed=seed,
         )
 
     train_loader, val_loader, class_names, num_classes = create_dataloaders(
@@ -52,10 +55,15 @@ def main(
     model_name="landmark_mlp",
     resume=False,
     device=DEVICE,
+    early_stopping_patience=8,
+    min_delta=0.0,
+    seed=SPLIT_SEED,
 ):
-    loaders = create_dataloaders_for_model(model_name)
+    set_random_seed(seed)
+    loaders = create_dataloaders_for_model(model_name, seed=seed)
     train_loader, val_loader, class_names, num_classes = loaders[:4]
     sample_count = loaders[4] if len(loaders) > 4 else None
+    input_dim = loaders[5] if len(loaders) > 5 else None
 
     print(class_names)
     print(f"Number of Classes: {num_classes}")
@@ -70,7 +78,7 @@ def main(
     with open(class_names_path_for(model_name), "w") as f:
         json.dump(class_names, f)
 
-    model, trainable_params = build_model(model_name, num_classes)
+    model, trainable_params = build_model(model_name, num_classes, input_dim=input_dim)
     model = model.to(device)
 
     criterion = nn.CrossEntropyLoss()
@@ -78,7 +86,7 @@ def main(
 
     checkpoint_path = checkpoint_path_for(model_name)
     start_epoch = 0
-    best_accuracy = 0.0
+    best_accuracy = float("-inf")
 
     if resume:
         if not os.path.exists(checkpoint_path):
@@ -115,6 +123,8 @@ def main(
             checkpoint_path,
             start_epoch=start_epoch,
             best_accuracy=best_accuracy,
+            early_stopping_patience=early_stopping_patience,
+            min_delta=min_delta,
         )
     except KeyboardInterrupt:
         print("\nTraining stopped by user.")
@@ -203,10 +213,32 @@ def cli():
         default="auto",
         help="Training device. auto uses CUDA when available (default).",
     )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=8,
+        help="Stop after this many epochs without validation improvement; use 0 to disable.",
+    )
+    parser.add_argument(
+        "--min-delta",
+        type=float,
+        default=0.0,
+        help="Minimum validation-accuracy improvement (percentage points) to reset patience.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=SPLIT_SEED,
+        help="Random seed for the reproducible train/validation split.",
+    )
     args = parser.parse_args()
 
     if args.resume and args.fresh:
         parser.error("Use either --resume or --fresh, not both.")
+    if args.patience < 0:
+        parser.error("--patience must be zero or greater.")
+    if args.min_delta < 0:
+        parser.error("--min-delta must be zero or greater.")
 
     model_name = args.model or prompt_model_name()
 
@@ -221,6 +253,9 @@ def cli():
         model_name=model_name,
         resume=resume,
         device=select_device(args.device),
+        early_stopping_patience=args.patience or None,
+        min_delta=args.min_delta,
+        seed=args.seed,
     )
 
 

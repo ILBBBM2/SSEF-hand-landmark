@@ -45,8 +45,9 @@ def load_class_names(dataset_path, cache_path=LANDMARKS_CACHE_PATH):
 def predict_landmarks(features, model_name, num_classes, class_names):
     tensor = torch.from_numpy(features).unsqueeze(0).to(DEVICE)
 
-    model, _ = build_model(model_name, num_classes)
-    model.load_state_dict(get_model_state_dict(checkpoint_path_for(model_name)))
+    state_dict = get_model_state_dict(checkpoint_path_for(model_name))
+    model, _ = build_model(model_name, num_classes, input_dim=features.size)
+    model.load_state_dict(state_dict)
     model = model.to(DEVICE)
     model.eval()
 
@@ -79,8 +80,9 @@ def predict_image(image_path, model_name, num_classes, class_names):
     image = Image.open(image_path).convert("RGB")
     tensor = transform(image).unsqueeze(0).to(DEVICE)
 
-    model, _ = build_model(model_name, num_classes)
-    model.load_state_dict(get_model_state_dict(checkpoint_path_for(model_name)))
+    state_dict = get_model_state_dict(checkpoint_path_for(model_name))
+    model, _ = build_model(model_name, num_classes, input_dim=landmarks.shape[1])
+    model.load_state_dict(state_dict)
     model = model.to(DEVICE)
     model.eval()
 

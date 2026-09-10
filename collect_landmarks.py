@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from landmarks.extract import HandLandmarkExtractor, draw_hand_landmarks
+from landmarks.normalize import FEATURE_DIM
 from utils import LANDMARKS_CACHE_PATH, normalize_label
 
 
@@ -16,7 +17,7 @@ def load_cache(cache_path):
     labels_file = os.path.join(cache_path, "labels.npy")
     metadata_file = os.path.join(cache_path, "metadata.json")
     if not os.path.exists(landmarks_file):
-        return np.empty((0, 63), dtype=np.float32), np.empty((0,), dtype=np.int64), []
+        return np.empty((0, FEATURE_DIM), dtype=np.float32), np.empty((0,), dtype=np.int64), []
     if not os.path.exists(metadata_file) or not os.path.exists(labels_file):
         raise FileNotFoundError(
             f"Incomplete landmark dataset in {cache_path}. Expected landmarks.npy, "
@@ -85,7 +86,7 @@ def collect(label, samples, camera_index, cache_path, every_n_frames):
     np.save(os.path.join(cache_path, "landmarks.npy"), landmarks)
     np.save(os.path.join(cache_path, "labels.npy"), labels)
     with open(os.path.join(cache_path, "metadata.json"), "w") as file:
-        json.dump({"class_names": classes, "num_samples": len(labels), "feature_dim": 63}, file, indent=2)
+        json.dump({"class_names": classes, "num_samples": len(labels), "feature_dim": FEATURE_DIM, "format": "two_hand_v1"}, file, indent=2)
     print(f"Saved {len(captured)} '{label}' samples. Dataset total: {len(labels)}.")
 
 

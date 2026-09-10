@@ -64,12 +64,15 @@ def train(
     epochs,
     checkpoint_path,
     start_epoch=0,
-    best_accuracy=0.0,
+    best_accuracy=float("-inf"),
+    early_stopping_patience=8,
+    min_delta=0.0,
 ):
     os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
 
     total_epochs = start_epoch + epochs
     completed_epoch = start_epoch
+    epochs_without_improvement = 0
 
     try:
         for epoch in range(start_epoch, total_epochs):
@@ -84,26 +87,33 @@ def train(
                 f"\nValidation Accuracy : {val_acc:.2f}%"
             )
 
-            if val_acc > best_accuracy:
+            if val_acc > best_accuracy + min_delta:
                 best_accuracy = val_acc
+                epochs_without_improvement = 0
+                save_checkpoint(
+                    checkpoint_path,
+                    model,
+                    optimizer,
+                    epoch + 1,
+                    best_accuracy,
+                )
+                print("Saved new best checkpoint.")
+            else:
+                epochs_without_improvement += 1
 
             completed_epoch = epoch + 1
-            save_checkpoint(
-                checkpoint_path,
-                model,
-                optimizer,
-                completed_epoch,
-                best_accuracy,
-            )
+            if (
+                early_stopping_patience is not None
+                and epochs_without_improvement >= early_stopping_patience
+            ):
+                print(
+                    "Early stopping: validation accuracy did not improve by "
+                    f"{min_delta:.2f} percentage points for "
+                    f"{early_stopping_patience} epochs."
+                )
+                break
     except KeyboardInterrupt:
-        print("\nTraining interrupted by user. Saving checkpoint...")
-        save_checkpoint(
-            checkpoint_path,
-            model,
-            optimizer,
-            completed_epoch,
-            best_accuracy,
-        )
+        print("\nTraining interrupted by user. The previously saved best checkpoint is retained.")
         raise
 
     return best_accuracy

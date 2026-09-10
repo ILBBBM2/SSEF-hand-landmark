@@ -67,6 +67,7 @@ def extract_dataset(dataset_path, cache_path):
         "class_names": class_names,
         "num_samples": len(labels),
         "feature_dim": landmarks.shape[1],
+        "format": "two_hand_v1",
         "failed_count": len(failed_images),
         "source_dataset": os.path.abspath(dataset_path),
     }

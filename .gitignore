@@ -2,6 +2,7 @@
 American/
 landmarks_cache/
 landmark_dataset/
+two_hand_landmark_dataset/
 vids/
 
 __pycache__/

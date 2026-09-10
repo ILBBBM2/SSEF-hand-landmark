@@ -138,6 +138,7 @@ def extract_videos(input_path, output_path, sample_fps=6.0, visualize=False):
                 "class_names": class_names,
                 "num_samples": len(labels),
                 "feature_dim": int(landmarks.shape[1]),
+                "format": "two_hand_v1",
                 "source_videos": str(Path(input_path).resolve()),
                 "sample_fps": sample_fps,
             },

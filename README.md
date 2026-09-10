@@ -1,12 +1,27 @@
 # Sign-language landmark translator
 
-This project uses Google's MediaPipe Hand Landmarker to track a webcam hand,
-then trains a small PyTorch classifier on the 21 detected landmarks. It is
+This project uses Google's MediaPipe Hand Landmarker to track up to two webcam hands,
+then trains a small PyTorch classifier on their landmarks. It is
 designed for *static* signs first (letters, numbers, and fixed words). Dynamic
 signs and full sign-language grammar need a sequence model and a larger,
 language-specific dataset.
 
 ## Workflow
+
+### Upgrade an existing one-hand dataset
+
+The default two-hand cache is `two_hand_landmark_dataset`. To keep your old
+one-hand recordings, migrate them once; the original `landmark_dataset` is not
+modified. Each old sample becomes both a left-only and right-only training
+sample:
+
+```powershell
+python migrate_to_two_hand_dataset.py
+```
+
+Then collect new two-hand labels into the default output, and train a fresh
+model. One-hand signs remain supported; their missing hand is represented by
+an empty slot.
 
 1. Build a dataset from labeled videos. The included `vids/` folder can contain
    one video per label, named `A.mov`, `B.mov`, `0.mov`, and so on. Only frames
@@ -60,7 +75,7 @@ language-specific dataset.
    **Delete a webcam dataset label (asks for label)**. Retrain afterward.
 
    Record several short takes per label, varying distance, lighting, and hand angle.
-   Keep the full hand and wrist in frame. Use the same label spelling every time.
+   Keep both hands and wrists in frame. Use the same label spelling every time.
 
 2. Train the landmark classifier:
 
@@ -71,9 +86,23 @@ language-specific dataset.
    The project automatically uses CUDA when it is available. `--device cuda`
    requires the GPU explicitly, while `--device auto` (the default) falls back
    to CPU when CUDA is unavailable. In VS Code, use **Train landmark classifier
-   (GPU)** from the Run and Debug dropdown.
+   (GPU)** from the Run and Debug dropdown. Training saves a checkpoint only
+   when validation accuracy improves, and stops after eight non-improving
+   epochs. Change this with `--patience`; use `--patience 0` to disable early
+   stopping.
 
-3. Translate from the webcam:
+3. Evaluate the saved best checkpoint on the reproducible validation split:
+
+   ```powershell
+   python evaluate.py --model landmark_mlp
+   ```
+
+   This writes `evaluation/metrics.json`, per-class precision/recall/F1, a
+   numeric confusion matrix, and `evaluation/confusion_matrix.png`. The default
+   split seed is 42; use the same `--seed` during training and evaluation when
+   changing it.
+
+4. Translate from the webcam:
 
    ```powershell
    python predict_webcam.py

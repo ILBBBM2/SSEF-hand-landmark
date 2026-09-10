@@ -27,8 +27,10 @@ def load_class_names(model_name):
 
 
 def load_model(model_name, num_classes):
-    model, _ = build_model(model_name, num_classes)
-    model.load_state_dict(get_model_state_dict(checkpoint_path_for(model_name)))
+    state_dict = get_model_state_dict(checkpoint_path_for(model_name))
+    input_dim = state_dict["0.weight"].shape[1] if model_name == "landmark_mlp" else None
+    model, _ = build_model(model_name, num_classes, input_dim=input_dim)
+    model.load_state_dict(state_dict)
     model = model.to(DEVICE)
     model.eval()
     return model
@@ -49,6 +51,10 @@ def predict_from_landmarks(model, features, class_names):
 def run_webcam(model_name, camera_index=0, confidence_threshold=0.70):
     class_names = load_class_names(model_name)
     model = load_model(model_name, len(class_names))
+    if model_name == "landmark_mlp" and model[0].in_features != 131:
+        raise RuntimeError(
+            "This is a legacy one-hand checkpoint. Run the dataset migration and retrain with --fresh."
+        )
 
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():

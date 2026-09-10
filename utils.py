@@ -1,22 +1,34 @@
 import os
+import random
 
+import numpy as np
 import torch
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 DATASET_PATH = "./vids"  # Optional legacy ImageFolder import source.
-LANDMARKS_CACHE_PATH = "./landmark_dataset"
-LANDMARK_FEATURE_DIM = 63
+LANDMARKS_CACHE_PATH = "./two_hand_landmark_dataset"
+LANDMARK_FEATURE_DIM = 131
 IMAGE_SIZE = 160
 BATCH_SIZE = 48
 EPOCHS = 20
 LEARNING_RATE = 0.001
 NUM_WORKERS = 8
 TRAIN_SPLIT = 0.8
+SPLIT_SEED = 42
 CHECKPOINT_DIR = "models"
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
+
+
+def set_random_seed(seed):
+    """Make data splits and training runs reproducible."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def normalize_label(label):

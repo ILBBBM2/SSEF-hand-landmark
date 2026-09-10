@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from landmarks.normalize import landmarks_to_vector, normalize_landmarks
+from landmarks.normalize import two_hand_feature
 
 
 def draw_hand_landmarks(frame, result):
@@ -62,7 +62,7 @@ class HandLandmarkExtractor:
     def __init__(
         self,
         static_image_mode=True,
-        max_num_hands=1,
+        max_num_hands=2,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
     ):
@@ -126,13 +126,28 @@ class HandLandmarkExtractor:
             self.last_world_landmarks = None
             return None
 
-        self.last_landmarks = result.hand_landmarks[0]
-        self.last_handedness = result.handedness[0] if result.handedness else None
-        self.last_world_landmarks = (
-            result.hand_world_landmarks[0] if result.hand_world_landmarks else None
-        )
-        raw = landmarks_to_vector(self.last_landmarks)
-        return normalize_landmarks(raw)
+        slots = {"Left": None, "Right": None}
+        unassigned = []
+        for index, landmarks in enumerate(result.hand_landmarks):
+            handedness = result.handedness[index][0].category_name if (
+                index < len(result.handedness) and result.handedness[index]
+            ) else None
+            if handedness in slots and slots[handedness] is None:
+                slots[handedness] = landmarks
+            else:
+                unassigned.append(landmarks)
+
+        # Handedness can occasionally be unavailable. Fill any remaining slots
+        # by image x-position so the feature order remains deterministic.
+        unassigned.sort(key=lambda hand: hand[0].x)
+        empty_slots = [name for name in ("Left", "Right") if slots[name] is None]
+        for slot_name, landmarks in zip(empty_slots, unassigned):
+            slots[slot_name] = landmarks
+
+        self.last_landmarks = result.hand_landmarks
+        self.last_handedness = result.handedness
+        self.last_world_landmarks = result.hand_world_landmarks
+        return two_hand_feature(slots["Left"], slots["Right"])
 
     def extract_from_path(self, image_path):
         image = Image.open(image_path).convert("RGB")

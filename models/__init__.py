@@ -14,10 +14,13 @@ LANDMARK_MODELS = {"landmark_mlp"}
 IMAGE_MODELS = {"mobilenetv2", "mobilenetv3", "customcnn"}
 
 
-def build_model(name, num_classes):
+def build_model(name, num_classes, input_dim=None):
     if name not in MODEL_REGISTRY:
         available = ", ".join(MODEL_REGISTRY)
         raise ValueError(f"Unknown model '{name}'. Choose from: {available}")
 
-    model, trainable_params = MODEL_REGISTRY[name](num_classes)
+    if name in LANDMARK_MODELS and input_dim is not None:
+        model, trainable_params = MODEL_REGISTRY[name](num_classes, input_dim=input_dim)
+    else:
+        model, trainable_params = MODEL_REGISTRY[name](num_classes)
     return model, trainable_params

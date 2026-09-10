@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
 from landmarks.normalize import FEATURE_DIM, augment_landmarks
-from utils import TRAIN_SPLIT
+from utils import SPLIT_SEED, TRAIN_SPLIT
 
 
 class LandmarkDataset(Dataset):
@@ -39,6 +39,14 @@ def load_landmark_cache(cache_path):
 
     landmarks = np.load(landmarks_path)
     labels = np.load(labels_path)
+    if landmarks.ndim != 2 or landmarks.shape[1] != FEATURE_DIM:
+        raise ValueError(
+            f"{cache_path} uses {landmarks.shape[1] if landmarks.ndim == 2 else 'an invalid'} features, "
+            f"but the two-hand pipeline requires {FEATURE_DIM}. "
+            "Run migrate_to_two_hand_dataset.py or extract new samples."
+        )
+    if len(landmarks) != len(labels):
+        raise ValueError("landmarks.npy and labels.npy have different numbers of samples.")
 
     if os.path.exists(metadata_path):
         with open(metadata_path) as f:
@@ -55,25 +63,38 @@ def create_landmark_dataloaders(
     batch_size,
     num_workers,
     train_split=TRAIN_SPLIT,
+    seed=SPLIT_SEED,
 ):
     landmarks, labels, class_names = load_landmark_cache(cache_path)
     num_classes = len(class_names)
 
     full_dataset = LandmarkDataset(landmarks, labels, augment=False)
-    train_size = int(train_split * len(full_dataset))
-    val_size = len(full_dataset) - train_size
-
-    train_subset, val_subset = random_split(
-        full_dataset,
-        [train_size, val_size],
-    )
+    groups_path = os.path.join(cache_path, "groups.npy")
+    if os.path.exists(groups_path):
+        groups = np.load(groups_path)
+        if len(groups) != len(full_dataset):
+            raise ValueError("groups.npy must contain one group ID per landmark sample.")
+        unique_groups = np.unique(groups)
+        np.random.default_rng(seed).shuffle(unique_groups)
+        train_groups = set(unique_groups[: int(train_split * len(unique_groups))].tolist())
+        train_indices = np.flatnonzero(np.isin(groups, list(train_groups))).tolist()
+        val_indices = np.flatnonzero(~np.isin(groups, list(train_groups))).tolist()
+    else:
+        train_size = int(train_split * len(full_dataset))
+        val_size = len(full_dataset) - train_size
+        generator = torch.Generator().manual_seed(seed)
+        train_subset, val_subset = random_split(
+            full_dataset, [train_size, val_size], generator=generator
+        )
+        train_indices, val_indices = train_subset.indices, val_subset.indices
 
     train_dataset = LandmarkDataset(
         landmarks,
         labels,
         augment=True,
     )
-    train_subset = Subset(train_dataset, train_subset.indices)
+    train_subset = Subset(train_dataset, train_indices)
+    val_subset = Subset(full_dataset, val_indices)
 
     pin_memory = torch.cuda.is_available()
 
@@ -93,4 +114,4 @@ def create_landmark_dataloaders(
         pin_memory=pin_memory,
     )
 
-    return train_loader, val_loader, class_names, num_classes, len(full_dataset)
+    return train_loader, val_loader, class_names, num_classes, len(full_dataset), landmarks.shape[1]
