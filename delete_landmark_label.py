@@ -18,6 +18,7 @@ def delete_label(label, dataset_path, assume_yes=False):
     landmarks_path = dataset / "landmarks.npy"
     labels_path = dataset / "labels.npy"
     metadata_path = dataset / "metadata.json"
+    groups_path = dataset / "groups.npy"
 
     required_files = (landmarks_path, labels_path, metadata_path)
     missing = [str(path) for path in required_files if not path.is_file()]
@@ -43,6 +44,9 @@ def delete_label(label, dataset_path, assume_yes=False):
     labels = np.load(labels_path)
     if len(landmarks) != len(labels):
         raise ValueError("landmarks.npy and labels.npy have different numbers of samples.")
+    groups = np.load(groups_path) if groups_path.is_file() else None
+    if groups is not None and len(groups) != len(labels):
+        raise ValueError("groups.npy must contain one group ID per landmark sample.")
 
     label_index = matching_indexes[0]
     stored_label = classes[label_index]
@@ -62,7 +66,8 @@ def delete_label(label, dataset_path, assume_yes=False):
     # Keep a recoverable copy before overwriting the three interdependent files.
     backup = dataset / "backups" / datetime.now().strftime("before_delete_%Y%m%d_%H%M%S")
     backup.mkdir(parents=True)
-    for path in required_files:
+    backup_files = (*required_files, groups_path) if groups is not None else required_files
+    for path in backup_files:
         shutil.copy2(path, backup / path.name)
 
     remaining_landmarks = landmarks[~remove_mask]
@@ -79,6 +84,8 @@ def delete_label(label, dataset_path, assume_yes=False):
 
     np.save(landmarks_path, remaining_landmarks)
     np.save(labels_path, remaining_labels)
+    if groups is not None:
+        np.save(groups_path, groups[~remove_mask])
     with metadata_path.open("w", encoding="utf-8") as file:
         json.dump(metadata, file, indent=2)
 

@@ -16,8 +16,14 @@ def load_cache(cache_path):
     landmarks_file = os.path.join(cache_path, "landmarks.npy")
     labels_file = os.path.join(cache_path, "labels.npy")
     metadata_file = os.path.join(cache_path, "metadata.json")
+    groups_file = os.path.join(cache_path, "groups.npy")
     if not os.path.exists(landmarks_file):
-        return np.empty((0, FEATURE_DIM), dtype=np.float32), np.empty((0,), dtype=np.int64), []
+        return (
+            np.empty((0, FEATURE_DIM), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+            [],
+            np.empty((0,), dtype=np.int64),
+        )
     if not os.path.exists(metadata_file) or not os.path.exists(labels_file):
         raise FileNotFoundError(
             f"Incomplete landmark dataset in {cache_path}. Expected landmarks.npy, "
@@ -25,12 +31,25 @@ def load_cache(cache_path):
         )
     with open(metadata_file) as file:
         classes = json.load(file)["class_names"]
-    return np.load(landmarks_file), np.load(labels_file), classes
+    landmarks = np.load(landmarks_file)
+    labels = np.load(labels_file)
+    if os.path.exists(groups_file):
+        groups = np.load(groups_file)
+        if len(groups) != len(labels):
+            raise ValueError(
+                "groups.npy must contain one group ID per landmark sample. "
+                "Repair the dataset before collecting more samples."
+            )
+    else:
+        # Older datasets had no group IDs. Give existing samples unique IDs so
+        # a subsequent collection remains internally consistent.
+        groups = np.arange(len(labels), dtype=np.int64)
+    return landmarks, labels, classes, groups
 
 
 def collect(label, samples, camera_index, cache_path, every_n_frames):
     os.makedirs(cache_path, exist_ok=True)
-    landmarks, labels, classes = load_cache(cache_path)
+    landmarks, labels, classes, groups = load_cache(cache_path)
     label = normalize_label(label)
     matching_indexes = [
         index for index, class_name in enumerate(classes)
@@ -83,8 +102,15 @@ def collect(label, samples, camera_index, cache_path, every_n_frames):
         return
     landmarks = np.vstack([landmarks, np.asarray(captured, dtype=np.float32)])
     labels = np.concatenate([labels, np.full(len(captured), label_index, dtype=np.int64)])
+    next_group_id = int(groups.max()) + 1 if len(groups) else 0
+    # These are direct recordings rather than migrated left/right duplicates,
+    # so each captured frame gets its own group ID.
+    groups = np.concatenate(
+        [groups, np.arange(next_group_id, next_group_id + len(captured), dtype=np.int64)]
+    )
     np.save(os.path.join(cache_path, "landmarks.npy"), landmarks)
     np.save(os.path.join(cache_path, "labels.npy"), labels)
+    np.save(os.path.join(cache_path, "groups.npy"), groups)
     with open(os.path.join(cache_path, "metadata.json"), "w") as file:
         json.dump({"class_names": classes, "num_samples": len(labels), "feature_dim": FEATURE_DIM, "format": "two_hand_v1"}, file, indent=2)
     print(f"Saved {len(captured)} '{label}' samples. Dataset total: {len(labels)}.")

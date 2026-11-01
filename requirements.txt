@@ -1,5 +1,6 @@
 torch
 torchvision
+onnx
 # Uses the MediaPipe Tasks Hand Landmarker API and the bundled .task model.
 mediapipe>=0.10.30,<1.0
 opencv-python
