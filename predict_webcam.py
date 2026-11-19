@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import time
 from collections import Counter, deque
 
 import cv2
@@ -48,7 +49,12 @@ def predict_from_landmarks(model, features, class_names):
     return label, confidence.item()
 
 
-def run_webcam(model_name, camera_index=0, confidence_threshold=0.70):
+def run_webcam(
+    model_name,
+    camera_index=0,
+    confidence_threshold=0.70,
+    uncertain_timeout=0.75,
+):
     class_names = load_class_names(model_name)
     model = load_model(model_name, len(class_names))
     if model_name == "landmark_mlp" and model[0].in_features != 131:
@@ -64,6 +70,7 @@ def run_webcam(model_name, camera_index=0, confidence_threshold=0.70):
     recent_predictions = deque(maxlen=8)
     translation = []
     stable_label = None
+    last_confident_prediction_at = None
 
     with HandLandmarkExtractor(static_image_mode=False) as extractor:
         while True:
@@ -78,23 +85,41 @@ def run_webcam(model_name, camera_index=0, confidence_threshold=0.70):
                 label, confidence = predict_from_landmarks(model, features, class_names)
                 if confidence >= confidence_threshold:
                     recent_predictions.append(label)
-                if recent_predictions:
+                    last_confident_prediction_at = time.monotonic()
+
                     stable_label, votes = Counter(recent_predictions).most_common(1)[0]
                     if votes < max(3, len(recent_predictions) // 2):
                         stable_label = None
+                    prediction_text = f"{label} ({confidence * 100:.1f}%)"
+                    prediction_color = (0, 255, 0)
+                else:
+                    # Keep a stable result only briefly while confidence recovers.
+                    # Old high-confidence votes must not be displayed indefinitely.
+                    if (
+                        last_confident_prediction_at is None
+                        or time.monotonic() - last_confident_prediction_at >= uncertain_timeout
+                    ):
+                        recent_predictions.clear()
+                        stable_label = None
+                        last_confident_prediction_at = None
+                    prediction_text = f"UNCERTAIN ({confidence * 100:.1f}%)"
+                    prediction_color = (0, 165, 255)
                 draw_hand_landmarks(display, extractor.last_result)
-                text = f"{label} ({confidence * 100:.1f}%)"
                 cv2.putText(
                     display,
-                    text,
+                    prediction_text,
                     (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1.0,
-                    (0, 255, 0),
+                    prediction_color,
                     2,
                     cv2.LINE_AA,
                 )
             else:
+                # A removed hand invalidates the previous sign immediately.
+                recent_predictions.clear()
+                stable_label = None
+                last_confident_prediction_at = None
                 cv2.putText(
                     display,
                     "No hand detected",
@@ -156,9 +181,20 @@ def main():
     parser.add_argument("--model", default="landmark_mlp")
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--threshold", type=float, default=0.70)
+    parser.add_argument(
+        "--uncertain-timeout",
+        type=float,
+        default=0.75,
+        help="Seconds to retain a stable label after confidence drops below --threshold.",
+    )
     args = parser.parse_args()
 
-    run_webcam(args.model, camera_index=args.camera, confidence_threshold=args.threshold)
+    run_webcam(
+        args.model,
+        camera_index=args.camera,
+        confidence_threshold=args.threshold,
+        uncertain_timeout=args.uncertain_timeout,
+    )
 
 
 if __name__ == "__main__":

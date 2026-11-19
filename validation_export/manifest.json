@@ -1,0 +1,12 @@
+{
+  "samples": 4624,
+  "features_per_sample": 131,
+  "classes": 38,
+  "feature_dtype": "float32 little-endian",
+  "label_dtype": "int32 little-endian",
+  "seed": 42,
+  "train_split": 0.8,
+  "unique_groups": 13282,
+  "training_samples": 18396,
+  "validation_samples": 4624
+}
