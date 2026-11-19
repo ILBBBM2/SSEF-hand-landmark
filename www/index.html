@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SSEF Hybrid Edge-Mobile ASL Translator</title>
+<script src="/ort.min.js"></script>
+<style>
+  body { margin:0; background:#0d1117; color:#e6edf3; font-family:system-ui,sans-serif; display:flex; flex-direction:column; align-items:center; }
+  header { width:100%; padding:10px 16px; background:#161b22; border-bottom:1px solid #30363d; display:flex; justify-content:space-between; align-items:center; box-sizing:border-box; }
+  .stage { position:relative; width:100%; max-width:640px; aspect-ratio:4/3; background:#000; margin-top:8px; border:1px solid #30363d; }
+  #cam, #overlay { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  .hud { width:100%; max-width:640px; padding:12px; box-sizing:border-box; display:grid; gap:10px; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:12px; }
+  .big-sign { font-size:2.4rem; font-weight:800; color:#58a6ff; letter-spacing:1px; }
+  .transcript { font-size:1.2rem; min-height:1.6em; color:#7ee787; word-break:break-word; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button { background:#238636; color:#fff; border:none; border-radius:8px; padding:10px 14px; font-weight:600; cursor:pointer; }
+  button.sec { background:#30363d; }
+  button.warn { background:#da3633; }
+  .metrics { font-family:monospace; font-size:0.85rem; color:#8b949e; }
+</style>
+</head>
+<body>
+<header>
+  <strong>SSEF Hybrid Wearable Translator</strong>
+  <span id="status" class="metrics">Initializing...</span>
+</header>
+
+<div class="stage">
+  <img id="cam" src="/stream" crossorigin="anonymous" />
+  <canvas id="overlay" width="640" height="480"></canvas>
+</div>
+
+<div class="hud">
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <div>
+        <div class="metrics">DETECTED SIGN (FLOAT16 GPU + ONNX)</div>
+        <div id="signOut" class="big-sign">---</div>
+      </div>
+      <div style="text-align:right;">
+        <div id="handTag" class="metrics">Hands: None</div>
+        <div id="latTag" class="metrics">Latency: -- ms | -- FPS</div>
+      </div>
+    </div>
+    <div class="metrics" style="margin-top:6px;">SENTENCE BUFFER:</div>
+    <div id="sentence" class="transcript"></div>
+    <div class="row" style="margin-top:8px;">
+      <button id="btnSpeak">Speak Buffer (TTS)</button>
+      <button id="btnSpace" class="sec">Space</button>
+      <button id="btnClear" class="sec">Clear</button>
+      <button id="btnFlip" class="sec" onclick="window.flipCam=!window.flipCam">Flip Cam</button>
+      <button id="btnLog" class="sec">Start CSV Log</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="metrics">BIDIRECTIONAL VOICE-TO-SIGN (HEARING &rarr; DEAF)</div>
+    <div id="voiceOut" class="transcript" style="color:#ffa657; margin:6px 0;">Tap "Listen Voice" for partner speech...</div>
+    <button id="btnListen" class="sec">Listen Voice (STT)</button>
+  </div>
+</div>
+
+<script type="module">
+const statusEl = document.getElementById("status");
+let handLandmarker = null;
+let mlpSession = null;
+
+try {
+  statusEl.textContent = "1/3 Loading MediaPipe bundle...";
+  const { FilesetResolver, HandLandmarker } = await import("/vision_bundle.mjs");
+
+  statusEl.textContent = "2/3 Loading HandLandmarker (float16)...";
+  const vision = await FilesetResolver.forVisionTasks("/wasm");
+  try {
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: "/hand_landmarker.task", delegate: "GPU" },
+      runningMode: "VIDEO",
+      numHands: 2,
+      minHandDetectionConfidence: 0.30,
+      minHandPresenceConfidence: 0.25,
+      minTrackingConfidence: 0.25
+    });
+  } catch (gpuErr) {
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: "/hand_landmarker.task", delegate: "CPU" },
+      runningMode: "VIDEO",
+      numHands: 2,
+      minHandDetectionConfidence: 0.30,
+      minHandPresenceConfidence: 0.25,
+      minTrackingConfidence: 0.25
+    });
+  }
+
+  statusEl.textContent = "3/3 Loading landmark_mlp.onnx...";
+  ort.env.wasm.wasmPaths = "/";
+  ort.env.wasm.numThreads = 1;
+  mlpSession = await ort.InferenceSession.create("/landmark_mlp.onnx", { executionProviders: ["wasm"] });
+
+  statusEl.textContent = "Ready (Offline Hybrid)";
+} catch (err) {
+  console.error(err);
+  statusEl.style.color = "#ff7b72";
+  statusEl.textContent = "ERR: " + (err?.message || err);
+  throw err;
+}
+
+const LABELS = [
+  "1","2","3","4","5","6","7","8","9",
+  "A","B","C","D","E","F","G","H","I","J",
+  "L","M","O","P","Q","R","S","T","U","V",
+  "Y","Z","K","N","W","X","0","HELLO","BYE"
+];
+
+const cam = document.getElementById("cam");
+const canvas = document.getElementById("overlay");
+const ctx = canvas.getContext("2d");
+const signOut = document.getElementById("signOut");
+const handTag = document.getElementById("handTag");
+const latTag = document.getElementById("latTag");
+const sentenceEl = document.getElementById("sentence");
+
+window.flipCam = true;
+const work = document.createElement("canvas");
+work.width = 640; work.height = 480;
+const wctx = work.getContext("2d");
+
+function handScale(lms) {
+  const dx = lms[9].x - lms[0].x;
+  const dy = lms[9].y - lms[0].y;
+  const dz = lms[9].z - lms[0].z;
+  return Math.max(Math.hypot(dx, dy, dz), 1e-6);
+}
+
+function norm63(lms) {
+  const wx = lms[0].x, wy = lms[0].y, wz = lms[0].z;
+  const scale = handScale(lms);
+  const out = new Float32Array(63);
+  for (let i = 0; i < 21; i++) {
+    out[i * 3 + 0] = (lms[i].x - wx) / scale;
+    out[i * 3 + 1] = (lms[i].y - wy) / scale;
+    out[i * 3 + 2] = (lms[i].z - wz) / scale;
+  }
+  return out;
+}
+
+const EDGES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
+const voteHist = [];
+let lastCommitted = "", lastCommitTime = 0;
+let logging = false;
+const csvRows = ["timestamp_ms,hands,top1_label,confidence,infer_ms"];
+
+function speak(text) {
+  if (!text || !("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+
+document.getElementById("btnSpeak").onclick = () => speak(sentenceEl.textContent.trim());
+document.getElementById("btnSpace").onclick = () => { sentenceEl.textContent += " "; };
+document.getElementById("btnClear").onclick = () => { sentenceEl.textContent = ""; lastCommitted = ""; };
+document.getElementById("btnLog").onclick = (e) => {
+  if (!logging) {
+    logging = true; csvRows.length = 1;
+    e.target.textContent = "Stop & Download CSV"; e.target.classList.add("warn");
+  } else {
+    logging = false;
+    e.target.textContent = "Start CSV Log"; e.target.classList.remove("warn");
+    const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `ssef_hybrid_benchmark_${Date.now()}.csv`;
+    a.click();
+  }
+};
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SpeechRec) {
+  const rec = new SpeechRec();
+  rec.continuous = true; rec.interimResults = true; rec.lang = "en-US";
+  rec.onresult = (ev) => {
+    let txt = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
+    document.getElementById("voiceOut").textContent = txt.toUpperCase();
+  };
+  document.getElementById("btnListen").onclick = () => { rec.start(); statusEl.textContent = "Listening Partner..."; };
+}
+
+let frames = 0, fpsT0 = performance.now(), fps = 0;
+
+async function loop() {
+  if (cam.complete && cam.naturalWidth > 0) {
+    const t0 = performance.now();
+    if (window.flipCam) {
+      wctx.save();
+      wctx.scale(-1, 1);
+      wctx.drawImage(cam, -640, 0, 640, 480);
+      wctx.restore();
+    } else {
+      wctx.drawImage(cam, 0, 0, 640, 480);
+    }
+
+    ctx.clearRect(0, 0, 640, 480);
+    ctx.drawImage(work, 0, 0, 640, 480);
+
+    const res = handLandmarker.detectForVideo(work, performance.now());
+    const feat = new Float32Array(131);
+    let hasL = false, hasR = false, lw = null, rw = null;
+
+    if (res.landmarks && res.landmarks.length > 0) {
+      const slots = { Left: null, Right: null };
+      const unassigned = [];
+
+      for (let i = 0; i < res.landmarks.length; i++) {
+        const lms = res.landmarks[i];
+        const cat = res.handednesses?.[i]?.[0]?.categoryName;
+        if ((cat === "Left" || cat === "Right") && slots[cat] === null) {
+          slots[cat] = lms;
+        } else {
+          unassigned.push(lms);
+        }
+      }
+      unassigned.sort((a, b) => a[0].x - b[0].x);
+      for (const slotName of ["Left", "Right"]) {
+        if (slots[slotName] === null && unassigned.length > 0) {
+          slots[slotName] = unassigned.shift();
+        }
+      }
+
+      for (const [slotName, lms] of [["Left", slots.Left], ["Right", slots.Right]]) {
+        if (!lms) continue;
+        const isRight = (slotName === "Right");
+        ctx.strokeStyle = isRight ? "#00e5ff" : "#ff4081";
+        ctx.lineWidth = 2;
+        for (const [a, b] of EDGES) {
+          ctx.beginPath();
+          ctx.moveTo(lms[a].x * 640, lms[a].y * 480);
+          ctx.lineTo(lms[b].x * 640, lms[b].y * 480);
+          ctx.stroke();
+        }
+        ctx.fillStyle = "#ffeb3b";
+        for (const p of lms) { ctx.beginPath(); ctx.arc(p.x * 640, p.y * 480, 3, 0, 6.28); ctx.fill(); }
+      }
+
+      if (slots.Left)  { feat.set(norm63(slots.Left), 0);   feat[126] = 1.0; hasL = true; lw = slots.Left[0]; }
+      if (slots.Right) { feat.set(norm63(slots.Right), 63); feat[127] = 1.0; hasR = true; rw = slots.Right[0]; }
+
+      if (hasL && hasR) {
+        const relScale = (handScale(slots.Left) + handScale(slots.Right)) / 2.0;
+        feat[128] = (rw.x - lw.x) / relScale;
+        feat[129] = (rw.y - lw.y) / relScale;
+        feat[130] = (rw.z - lw.z) / relScale;
+      }
+
+      const inputName = mlpSession.inputNames[0];
+      const outputName = mlpSession.outputNames[0];
+      const tensor = new ort.Tensor("float32", feat, [1, 131]);
+      const outMap = await mlpSession.run({ [inputName]: tensor });
+      const logits = outMap[outputName].data;
+
+      let maxL = -1e9, bestC = 0;
+      for (let c = 0; c < logits.length; c++) if (logits[c] > maxL) { maxL = logits[c]; bestC = c; }
+      let sumE = 0;
+      const probs = new Float32Array(logits.length);
+      for (let c = 0; c < logits.length; c++) { probs[c] = Math.exp(logits[c] - maxL); sumE += probs[c]; }
+      for (let c = 0; c < logits.length; c++) probs[c] /= sumE;
+
+      voteHist.push(probs);
+      if (voteHist.length > 6) voteHist.shift();
+
+      let winC = 0, winConf = 0;
+      for (let c = 0; c < logits.length; c++) {
+        let s = 0;
+        for (const p of voteHist) s += p[c];
+        const avg = s / voteHist.length;
+        if (avg > winConf) { winConf = avg; winC = c; }
+      }
+
+      const label = LABELS[winC] || String(winC);
+      const htag = (hasL && hasR) ? "L+R" : (hasR ? "R" : "L");
+      handTag.textContent = `Hands: [${htag}] (${(winConf * 100).toFixed(0)}%)`;
+
+      if (voteHist.length >= 3 && winConf >= 0.60) {
+        signOut.textContent = label;
+        const now = performance.now();
+        if (label !== lastCommitted || now - lastCommitTime > 1800) {
+          lastCommitted = label; lastCommitTime = now;
+          sentenceEl.textContent += (label.length > 1 ? ` ${label} ` : label);
+          speak(label);
+        }
+      } else {
+        signOut.textContent = `${LABELS[bestC]}?`;
+      }
+
+      const inferMs = performance.now() - t0;
+      if (logging) csvRows.push(`${Date.now()},${htag},${label},${winConf.toFixed(3)},${inferMs.toFixed(1)}`);
+      latTag.textContent = `Latency: ${inferMs.toFixed(1)} ms | ${fps.toFixed(0)} FPS`;
+      window.noHandFrames = 0;
+    } else {
+      window.noHandFrames = (window.noHandFrames || 0) + 1;
+      if (window.noHandFrames > 4) {
+        voteHist.length = 0;
+        handTag.textContent = "Hands: None";
+        signOut.textContent = "---";
+      }
+    }
+
+    frames++;
+    const now = performance.now();
+    if (now - fpsT0 >= 1000) { fps = (frames * 1000) / (now - fpsT0); frames = 0; fpsT0 = now; }
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
